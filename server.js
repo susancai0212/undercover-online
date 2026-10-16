@@ -1,0 +1,13 @@
+import express from 'express';import{createServer}from'node:http';import{randomBytes,randomInt,randomUUID}from'node:crypto';import{Server}from'socket.io';
+const app=express();app.use(express.static('public'));const server=createServer(app),io=new Server(server),rooms=new Map();
+const fail=(cb,msg)=>cb?.({ok:false,error:msg});const snapshot=r=>({code:r.code,total:r.total,round:r.round,started:r.started,players:[...r.players.values()].map(p=>({id:p.id,name:p.name,host:p.id===r.host,online:!!p.socket,drawn:p.drawn}))});const update=r=>io.to(r.code).emit('room',snapshot(r));
+function assign(r){const list=[...r.players.values()],spy=randomInt(list.length);list.forEach((p,i)=>{p.role=i===spy?'内鬼':'好人';p.drawn=false});r.started=true;r.round++}
+io.on('connection',s=>{
+function enter(r,name,token,cb){if(s.data.ref)return fail(cb,'请刷新页面后重试');let p=[...r.players.values()].find(p=>p.token===token&&token);if(!p){if(r.started||r.players.size>=r.total)return fail(cb,'房间已满或已经开始');if(!name)return fail(cb,'请输入昵称');p={id:randomUUID(),token:randomBytes(24).toString('hex'),name:name.slice(0,24),socket:null,drawn:false,role:null};r.players.set(p.id,p);if(!r.host)r.host=p.id}if(p.socket&&p.socket!==s.id){const old=io.sockets.sockets.get(p.socket);if(old){old.emit('replaced');old.leave(r.code);old.data.ref=null}}p.socket=s.id;s.data.ref={code:r.code,id:p.id};s.join(r.code);if(!r.started&&r.players.size===r.total)assign(r);cb?.({ok:true,id:p.id,token:p.token,room:snapshot(r),role:p.drawn?p.role:null});update(r)}
+function member(cb){const ref=s.data.ref,r=rooms.get(ref?.code),p=r?.players.get(ref?.id);if(!p||p.socket!==s.id){fail(cb,'房间会话已失效');return null}return{r,p}}
+s.on('create',(d,cb)=>{const total=Number(d?.total),name=String(d?.name||'').trim();if(!name||!Number.isInteger(total)||total<3||total>30)return fail(cb,'请输入昵称和3至30人的人数');let code;do{code=randomBytes(4).toString('hex').slice(0,6).toUpperCase()}while(rooms.has(code));const r={code,total,host:null,round:0,started:false,players:new Map()};rooms.set(code,r);enter(r,name,'',cb)});
+s.on('join',(d,cb)=>{const r=rooms.get(String(d?.code||'').toUpperCase());if(!r)return fail(cb,'房间不存在或服务器已重启');enter(r,String(d?.name||'').trim(),String(d?.token||''),cb)});
+s.on('draw',(_,cb)=>{const m=member(cb);if(!m)return;const{r,p}=m;if(!r.started)return fail(cb,'等待其他玩家加入');p.drawn=true;cb?.({ok:true,role:p.role});update(r)});
+s.on('restart',(_,cb)=>{const m=member(cb);if(!m)return;const{r,p}=m;if(r.host!==p.id)return fail(cb,'仅房主可以重新开局');assign(r);cb?.({ok:true});io.to(r.code).emit('newRound');update(r)});
+s.on('disconnect',()=>{const ref=s.data.ref,r=rooms.get(ref?.code),p=r?.players.get(ref?.id);if(p?.socket===s.id){p.socket=null;update(r)}})
+});server.listen(process.env.PORT||3000,'0.0.0.0');
