@@ -1,5 +1,5 @@
 import express from 'express';import{createServer}from'node:http';import{randomBytes,randomInt,randomUUID}from'node:crypto';import{Server}from'socket.io';
-const app=express();app.use(express.static('public'));const server=createServer(app),io=new Server(server),rooms=new Map();
+const app=express();app.use(express.static('.'));const server=createServer(app),io=new Server(server),rooms=new Map();
 const fail=(cb,msg)=>cb?.({ok:false,error:msg});const snapshot=r=>({code:r.code,total:r.total,round:r.round,started:r.started,players:[...r.players.values()].map(p=>({id:p.id,name:p.name,host:p.id===r.host,online:!!p.socket,drawn:p.drawn}))});const update=r=>io.to(r.code).emit('room',snapshot(r));
 function assign(r){const list=[...r.players.values()],spy=randomInt(list.length);list.forEach((p,i)=>{p.role=i===spy?'内鬼':'好人';p.drawn=false});r.started=true;r.round++}
 io.on('connection',s=>{
